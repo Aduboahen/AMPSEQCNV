@@ -1,11 +1,12 @@
 #!/usr/bin/env python
+# -*- coding: utf-8 -*-
 """
 gc_bias_correction.py
 Correct GC bias in read coverage following Benjamini & Speed (2012), 
 and summarise per-amplicon statistics.
 
 Usage:
-    python gc_bias_correction.py --bam sample.bam --fasta reference.fa --bed targets.bed \
+    python gc_bias_correction.py --bam BAMS --fasta reference.fa --bed targets.bed \
           --window 300 --output corrected_coverage.tsv --summary amplicon_summary.tsv
 
 Dependencies:
@@ -16,8 +17,9 @@ Dependencies:
     scipy
     bedtools (for preparing BED file externally if needed)
 """
-
+import os
 import argparse
+from pathlib import Path
 import csv
 import sys
 from collections import defaultdict
@@ -30,16 +32,24 @@ from scipy.interpolate import interp1d
 
 def compute_gc(seq: str) -> float:
     """
-    Compute GC content of a sequence as a percentage.
+    Calculate the GC content of a DNA sequence.
 
-    Args:
-        seq (str): A DNA sequence string.
+    This function computes the percentage of guanine (G) and cytosine (C)
+    bases in a given DNA sequence.
 
-    Returns:
-        float: GC content as a percentage. Returns NaN if the sequence is empty.
+    Parameters
+    ----------
+    seq : str
+        The DNA sequence for which to calculate GC content.
+
+    Returns
+    -------
+    float
+        The GC content as a percentage of the total sequence length.
+        Returns NaN if the sequence is empty.
     """
-    # seq = seq
-    if len(seq) == 0:
+
+    if not seq:
         return np.nan
     gc = seq.count("G") + seq.count("C")
     return 100.0 * gc / len(seq)
@@ -47,46 +57,56 @@ def compute_gc(seq: str) -> float:
 
 def load_bed_regions(bed_path: str):
     """
-    Load BED regions from a file and return as a list of (chrom, start, end) tuples.
+    Load regions from a BED file.
 
-    Args:
-        bed_path (str): Path to the BED file.
+    Parameters
+    ----------
+    bed_path : str
+        Path to the BED file.
 
-    Returns:
-        list: A list of (chrom, start, end) tuples.
+    Returns
+    -------
+    list
+        A list of 3-tuples containing the chromosome, start position, and
+        end position of each region in the BED file.
     """
     regions = []
-    with open(bed_path, encoding="utf-8") as fh:
-        for line in fh:
-            if line.startswith("#") or line.strip() == "":
-                continue
-            chrom, start, end = line.strip().split()[:3]
-            regions.append((chrom, int(start), int(end)))
+    try:
+        with open(bed_path, encoding="utf-8") as fh:
+            for line in fh:
+                if line.startswith("#") or line.strip() == "":
+                    continue
+                chrom, start, end = line.strip().split()[:3]
+                regions.append((chrom, int(start), int(end)))
+    except FileNotFoundError:
+        sys.stderr.write(f"Error: BED file {bed_path} not found.\n")
+        sys.exit(1)
     return regions
 
 
-def collect_coverage_in_bed(
-    bam_path: str,
-    fa: Fasta,
-    regions,
-    window: int,
-):
+def collect_coverage_in_bed(bam_path: str, fa: Fasta, regions, window: int):
     """
-    Collect GC content and coverage within BED regions from a BAM file.
+    Collect coverage and GC content within regions from a BAM file.
 
-    Args:
-        bam_path (str): Path to the input BAM file.
-        fa (Fasta): A Fasta object for the reference genome.
-        regions (list): A list of (chrom, start, end) tuples for the regions of interest.
-        window (int): The window size for computing GC content.
-        min_mapq (int): The minimum mapping quality to include. Defaults to 0.
-        max_depth (int): The maximum read depth to include. Defaults to 100000.
+    Parameters
+    ----------
+    bam_path : str
+        Path to the BAM file.
+    fa : Fasta
+        Reference genome sequence.
+    regions : list
+        List of 3-tuples containing the chromosome, start position, and
+        end position of each region.
+    window : int
+        Window size of the fragment to compute GC content.
 
-    Returns:
-        tuple: A tuple of four arrays: GC content, coverage, positions, and region indices.
+    Returns
+    -------
+    tuple
+        A tuple of three numpy arrays: the GC content, coverage values, and
+        region mapping of each position.
     """
-
-    bam = pysam.AlignmentFile(bam_path, "rb")  # type: ignore
+    bam = pysam.AlignmentFile(bam_path, "rb")
     gc_vals = []
     cov_vals = []
     positions = []
@@ -95,13 +115,13 @@ def collect_coverage_in_bed(
     sys.stderr.write("Collecting coverage and GC content within BED regions...\n")
     for region_index, (chrom, start, end) in enumerate(regions):
         for pileup in bam.pileup(chrom, start, end, stepper="all"):
-            pos = pileup.pos  # type: ignore
+            pos = pileup.pos
             cov = pileup.nsegments
             half = window // 2
             seq_start = max(0, pos - half)
-            seq_end = pos + half  # + window % 2
+            seq_end = pos + half
             try:
-                seq = (fa.get_seq(chrom, seq_start, seq_end)).seq  # type: ignore
+                seq = fa.get_seq(chrom, seq_start, seq_end).seq
             except KeyError:
                 continue
             gc = compute_gc(seq)
@@ -112,20 +132,28 @@ def collect_coverage_in_bed(
             positions.append((chrom, pos))
             region_map.append(region_index)
     bam.close()
-    return np.array(gc_vals), np.array(cov_vals), positions, region_map
+    return np.array(gc_vals), np.array(cov_vals), region_map
 
 
 def fit_loess(gc_vals: np.ndarray, cov_vals: np.ndarray, frac: float = 0.3):
     """
-    Fit a LOESS curve to the given GC content and coverage arrays.
+    Fit a LOESS curve to the coverage vs GC content data.
 
-    Args:
-        gc_vals (ndarray): GC content values.
-        cov_vals (ndarray): Coverage values.
-        frac (float): Fraction of data to use for LOESS regression. Defaults to 0.3.
+    Parameters
+    ----------
+    gc_vals : numpy.ndarray
+        A 1D array of GC content values.
+    cov_vals : numpy.ndarray
+        A 1D array of coverage values.
+    frac : float, optional
+        The fraction of the data to use when computing the LOESS
+        curve. Default is 0.3.
 
-    Returns:
-        ndarray: The LOESS curve as a 2D array of (GC, coverage) values.
+    Returns
+    -------
+    tuple
+        A tuple of two 1D numpy arrays: the x and y values of the
+        LOESS curve.
     """
     sys.stderr.write("Fitting LOESS curve...\n")
     loess = sm.nonparametric.lowess(cov_vals, gc_vals, frac=frac, return_sorted=True)
@@ -136,88 +164,51 @@ def correct_coverage(
     gc_vals: np.ndarray,
     cov_vals: np.ndarray,
     loess_result,
-    output_path: str,
-    positions,
     region_map,
     region_names,
-    summary_path=None,
+    sampleid: str,
+    summary_path: str = "amplicon_coverage.tsv",
 ):
     """
-    Write the corrected coverage and expected coverage to a TSV file.
+    Correct coverage values using a LOESS curve.
 
     Parameters
     ----------
-    gc_vals : ndarray
-        GC content values.
-    cov_vals : ndarray
-        Coverage values.
-    loess_result : ndarray
-        LOESS curve as a 2D array of (GC, coverage) values.
-    output_path : str
-        Path to write the corrected coverage output file.
-    positions : list
-        List of (chrom, pos) tuples.
+    gc_vals : numpy.ndarray
+        A 1D array of GC content values.
+    cov_vals : numpy.ndarray
+        A 1D array of coverage values.
+    loess_result : tuple
+        A tuple of two 1D numpy arrays: the x and y values of the
+        LOESS curve.
     region_map : list
-        List of region indices for each position.
+        A list of region indices that the coverage values correspond
+        to.
     region_names : list
-        List of region names.
+        A list of region names (chromosome:start-end) that the
+        coverage values correspond to.
+    sampleid : str
+        The sample ID to write to the output file.
     summary_path : str, optional
-        Path to write the per-amplicon summary output file. Defaults to None.
+        The path to the output file to write the corrected coverage
+        values to. If not provided, does not write to a file.
+
     """
     x, y = loess_result[:, 0], loess_result[:, 1]
-    interp = interp1d(x, y, bounds_error=False, fill_value="extrapolate")  # type: ignore
-    sys.stderr.write(f"Writing corrected coverage to {output_path} ...\n")
+    interp = interp1d(
+        x, y, bounds_error=False, fill_value="extrapolate"
+    )  # pyright: ignore[reportArgumentType]
 
-    with open(output_path, "w", newline="", encoding="utf-8") as fh:
-        writer = csv.writer(fh, delimiter="\t")
-        writer.writerow(
-            ["Chrom", "Pos", "GC", "Coverage", "Expected", "Corrected", "Region"]
-        )
-        for gc, cov, (chrom, pos), region_idx in zip(
-            gc_vals, cov_vals, positions, region_map
-        ):
-            expected = interp(gc)
-            corrected = (
-                cov / expected if expected != 0 and not np.isnan(expected) else 0
-            )
-            region_name = (
-                region_names[region_idx]
-                if region_idx < len(region_names)
-                else f"region_{region_idx}"
-            )
-            writer.writerow(
-                [
-                    chrom,
-                    pos,
-                    f"{gc:.2f}",
-                    cov,
-                    f"{expected:.4f}",
-                    f"{corrected:.4f}",
-                    region_name,
-                ]
-            )
+    per_region_cov = defaultdict(list)
+    per_region_exp = defaultdict(list)
+    for corr, exp, region_idx in zip(cov_vals, interp(gc_vals), region_map):
+        per_region_cov[region_idx].append(corr)
+        per_region_exp[region_idx].append(exp)
 
     if summary_path:
-        sys.stderr.write(f"Writing per-amplicon summary to {summary_path} ...\n")
-        per_region_cov = defaultdict(list)
-        per_region_exp = defaultdict(list)
-        for corr, exp, region_idx in zip(cov_vals, interp(gc_vals), region_map):
-            per_region_cov[region_idx].append(corr)
-            per_region_exp[region_idx].append(exp)
-
-        with open(summary_path, "w", newline="", encoding="utf-8") as fh:
+        with open(summary_path, "a", newline="", encoding="utf-8") as fh:
             writer = csv.writer(fh, delimiter="\t")
-            writer.writerow(
-                [
-                    "Chromosome",
-                    "Region",
-                    "Coverage",
-                    "Expected Coverage",
-                    "Corrected Coverage",
-                    # "NumBases",
-                ]
-            )
-            for (idx, values), (values2) in zip(
+            for (idx, values), values2 in zip(
                 per_region_cov.items(), per_region_exp.values()
             ):
                 region_name = (
@@ -229,28 +220,42 @@ def correct_coverage(
                         region_name.split(":")[1],
                         f"{np.nansum(values):.4f}",
                         f"{np.nansum(values2):.4f}",
-                        f"{np.nansum(values)/np.nansum(values2, ):.4f}",
-                        # len(values),
+                        f"{np.nansum(values) / np.nansum(values2):.4f}",
+                        sampleid,
                     ]
                 )
 
 
 def main():
     """
-    GC bias correction and per-amplicon coverage summary.
+    Entry point for GC bias correction and per-amplicon coverage summary.
 
-    This script takes a BAM file of aligned reads, a FASTA file of the reference genome,
-    and a BED file of target amplicon regions. It then computes GC content and read coverage
-    within the regions, fits a LOESS curve to the data, and applies the LOESS curve to
-    correct the coverage values. The corrected coverage values are then written to a TSV
-    file. Optionally, a per-amplicon summary of mean and median corrected coverage values
-    can be written to a separate TSV file.
+    Collects coverage and GC content within regions from a BAM file, fits a LOESS curve to the data, and
+    corrects the coverage values. Computes per-amplicon coverage summary and writes to an output file.
 
+    Parameters
+    ----------
+    bams : str
+        Path to sorted BAM files.
+    fasta : str
+        Reference genome in FASTA format (indexed by faidx).
+    bed : str
+        BED file of target amplicon regions.
+    window : int, optional
+        Fragment window size to compute GC (default is 300).
+    frac : float, optional
+        LOESS smoothing parameter (default is 0.3).
+    summary : str, optional
+        Output TSV path for per-amplicon summary (default is "amplicon_coverage.tsv").
+
+    Returns
+    -------
+    None
     """
     parser = argparse.ArgumentParser(
         description="GC bias correction and per-amplicon coverage summary."
     )
-    parser.add_argument("--bam", required=True, help="Input BAM file (sorted).")
+    parser.add_argument("--bams", required=True, help="Path to sorted BAM files.")
     parser.add_argument(
         "--fasta",
         required=True,
@@ -272,53 +277,61 @@ def main():
         help="LOESS smoothing parameter (%(default)s).",
     )
     parser.add_argument(
-        "--output", default="corrected_coverage.tsv", help="Output TSV path."
-    )
-    parser.add_argument(
         "--summary",
-        default="per_amplicon.tsv",
+        default="amplicon_coverage.tsv",
         help="Output TSV path for per-amplicon summary.",
     )
-    parser.add_argument(
-        "--sample",
-        help="Sample name for output files.",
-    )
-    # parser.add_argument(
-    # "--min-mapq", type=int, default=0, help="Minimum mapping quality to include."
-    # )
     args = parser.parse_args()
 
-    fa = Fasta(args.fasta, sequence_always_upper=True)
+    summary_path = Path(args.summary)
+    if summary_path.exists() and summary_path.is_file():
+        sys.stderr.write(f"Removing existing summary file: {args.summary}\n")
+        os.remove(summary_path)
+
+    with open(summary_path, "a", newline="", encoding="utf-8") as fh:
+        writer = csv.writer(fh, delimiter="\t")
+        writer.writerow(
+            [
+                "Chromosome",
+                "Region",
+                "Coverage",
+                "Expected Coverage",
+                "Corrected Coverage",
+                "Sampleid",
+            ]
+        )
+    sys.stderr.write(f"Writing per-amplicon summary to {args.summary} ...\n")
+
+    try:
+        fa = Fasta(args.fasta, sequence_always_upper=True)
+    except FileNotFoundError:
+        sys.stderr.write(f"Error: FASTA file {args.fasta} not found.\n")
+        sys.exit(1)
+
     regions = load_bed_regions(args.bed)
     region_names = [f"{c}:{s}-{e}" for c, s, e in regions]
 
-    gc_vals, cov_vals, positions, region_map = collect_coverage_in_bed(
-        args.bam, fa, regions, args.window
-    )
-
-    if len(gc_vals) == 0:
-        sys.stderr.write("No positions collected; check inputs.\n")
-        return
-
-    loess_result = fit_loess(gc_vals, cov_vals, args.frac)
-    correct_coverage(
-        gc_vals,
-        cov_vals,
-        loess_result,
-        (
-            f"{args.sample}_corrected_coverage_per_site.tsv"
-            if args.sample
-            else args.output
-        ),
-        positions,
-        region_map,
-        region_names,
-        (
-            f"{args.sample}_corrected_coverage_per_amplicon.tsv"
-            if args.sample
-            else args.summary
-        ),
-    )
+    for root, _, files in os.walk(args.bams):
+        for file in files:
+            if file.endswith(".bam"):
+                bam = os.path.join(root, file)
+                sampleid = file.split(".")[0]
+                gc_vals, cov_vals, region_map = collect_coverage_in_bed(
+                    bam, fa, regions, args.window
+                )
+                if len(gc_vals) == 0:
+                    sys.stderr.write("No positions collected; check inputs.\n")
+                    continue
+                loess_result = fit_loess(gc_vals, cov_vals, args.frac)
+                correct_coverage(
+                    gc_vals,
+                    cov_vals,
+                    loess_result,
+                    region_map,
+                    region_names,
+                    sampleid,
+                    args.summary,
+                )
 
     sys.stderr.write("Done.\n")
 
