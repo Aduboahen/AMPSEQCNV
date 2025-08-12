@@ -64,7 +64,7 @@ def cnv_calculator(
     ax = sb.stripplot(data=log2_ratios, jitter=True, size=5)
     # Add labels for values >= 1
     for i, sample_id in enumerate(log2_ratios.index):
-        for j, chromosome in enumerate(log2_ratios.columns):
+        for j, chrom in enumerate(log2_ratios.columns):
             value = log2_ratios.iloc[i, j]
             if value >= 1:  # type: ignore
                 ax.text(
