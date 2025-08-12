@@ -15,7 +15,6 @@ Dependencies:
     numpy
     statsmodels
     scipy
-    bedtools (for preparing BED file externally if needed)
 """
 import os
 import argparse
@@ -27,6 +26,7 @@ from pyfaidx import Fasta
 import numpy as np
 import statsmodels.api as sm
 from scipy.interpolate import interp1d
+
 
 def compute_gc(seq: str) -> float:
     """
@@ -250,7 +250,6 @@ def get_output_filename(path: str) -> str:
         if choice == "d":
             os.remove(path)
             print(f"Deleted '{path}'.")
-            break
         elif choice == "r":
             path = input("Enter new filename: ").strip()
         elif choice == "q":
@@ -265,8 +264,9 @@ def main():
     """
     Entry point for GC bias correction and per-amplicon coverage summary.
 
-    Collects coverage and GC content within regions from a BAM file, fits a LOESS curve to the data, and
-    corrects the coverage values. Computes per-amplicon coverage summary and writes to an output file.
+    Collects coverage and GC content within regions from a BAM file, 
+    fits a LOESS curve to the data, and corrects the coverage values. 
+    Computes per-amplicon coverage summary and writes to an output file.
 
     Parameters
     ----------
