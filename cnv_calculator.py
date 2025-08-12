@@ -157,8 +157,6 @@ def main():
 
     if args.plot_results:
         plt.savefig("cnv_results.png", dpi=300, bbox_inches="tight")
-        plt.show()
-
 
 if __name__ == "__main__":
     main()
