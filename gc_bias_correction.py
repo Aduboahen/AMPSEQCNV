@@ -19,16 +19,14 @@ Dependencies:
 """
 import os
 import argparse
-from pathlib import Path
 import csv
 import sys
 from collections import defaultdict
-import pysam
+from pysam import AlignmentFile
 from pyfaidx import Fasta
 import numpy as np
 import statsmodels.api as sm
 from scipy.interpolate import interp1d
-
 
 def compute_gc(seq: str) -> float:
     """
@@ -106,7 +104,7 @@ def collect_coverage_in_bed(bam_path: str, fa: Fasta, regions, window: int):
         A tuple of three numpy arrays: the GC content, coverage values, and
         region mapping of each position.
     """
-    bam = pysam.AlignmentFile(bam_path, "rb")
+    bam = AlignmentFile(bam_path, "rb")
     gc_vals = []
     cov_vals = []
     positions = []
@@ -115,13 +113,15 @@ def collect_coverage_in_bed(bam_path: str, fa: Fasta, regions, window: int):
     sys.stderr.write("Collecting coverage and GC content within BED regions...\n")
     for region_index, (chrom, start, end) in enumerate(regions):
         for pileup in bam.pileup(chrom, start, end, stepper="all"):
-            pos = pileup.pos
+            pos = pileup.pos  # pyright: ignore[reportAttributeAccessIssue]
             cov = pileup.nsegments
             half = window // 2
             seq_start = max(0, pos - half)
             seq_end = pos + half
             try:
-                seq = fa.get_seq(chrom, seq_start, seq_end).seq
+                seq = fa.get_seq(
+                    chrom, seq_start, seq_end
+                ).seq  # pyright: ignore[reportAttributeAccessIssue]
             except KeyError:
                 continue
             gc = compute_gc(seq)
@@ -157,6 +157,7 @@ def fit_loess(gc_vals: np.ndarray, cov_vals: np.ndarray, frac: float = 0.3):
     """
     sys.stderr.write("Fitting LOESS curve...\n")
     loess = sm.nonparametric.lowess(cov_vals, gc_vals, frac=frac, return_sorted=True)
+
     return loess
 
 
@@ -196,34 +197,68 @@ def correct_coverage(
     """
     x, y = loess_result[:, 0], loess_result[:, 1]
     interp = interp1d(
-        x, y, bounds_error=False, fill_value="extrapolate"
-    )  # pyright: ignore[reportArgumentType]
+        x,
+        y,
+        bounds_error=False,
+        fill_value="extrapolate",  # pyright: ignore[reportArgumentType]
+    )
 
     per_region_cov = defaultdict(list)
     per_region_exp = defaultdict(list)
-    for corr, exp, region_idx in zip(cov_vals, interp(gc_vals), region_map):
+
+    # Clip predicted expected coverage to >= 0
+    expected_covs = np.clip(interp(gc_vals), 0, None)
+
+    for corr, exp, region_idx in zip(cov_vals, expected_covs, region_map):
         per_region_cov[region_idx].append(corr)
         per_region_exp[region_idx].append(exp)
 
     if summary_path:
         with open(summary_path, "a", newline="", encoding="utf-8") as fh:
             writer = csv.writer(fh, delimiter="\t")
-            for (idx, values), values2 in zip(
-                per_region_cov.items(), per_region_exp.values()
-            ):
+            for region_idx in sorted(per_region_cov.keys()):
+                values = per_region_cov[region_idx]
+                values2 = per_region_exp[region_idx]
+                denom = np.nansum(values2)
+                ratio = 0 if denom == 0 else np.nansum(values) / denom
                 region_name = (
-                    region_names[idx] if idx < len(region_names) else f"region_{idx}"
+                    region_names[region_idx]
+                    if region_idx < len(region_names)
+                    else f"region_{region_idx}"
                 )
                 writer.writerow(
                     [
                         region_name.split(":")[0],
                         region_name.split(":")[1],
-                        f"{np.nansum(values):.4f}",
-                        f"{np.nansum(values2):.4f}",
-                        f"{np.nansum(values) / np.nansum(values2):.4f}",
+                        f"{np.nansum(values):.2f}",
+                        f"{denom:.2f}",
+                        f"{ratio:.2f}" if not np.isnan(ratio) else 0,
                         sampleid,
                     ]
                 )
+
+
+def get_output_filename(path: str) -> str:
+    """Check if file exists, prompt to delete or rename."""
+    while os.path.exists(path):
+        choice = (
+            input(f"File '{path}' already exists. [D]elete, [R]ename, or [Q]uit? ")
+            .strip()
+            .lower()
+        )
+
+        if choice == "d":
+            os.remove(path)
+            print(f"Deleted '{path}'.")
+            break
+        elif choice == "r":
+            path = input("Enter new filename: ").strip()
+        elif choice == "q":
+            raise SystemExit("Aborted by user.")
+        else:
+            print("Invalid choice. Please enter D, R, or Q.")
+
+    return path
 
 
 def main():
@@ -255,7 +290,9 @@ def main():
     parser = argparse.ArgumentParser(
         description="GC bias correction and per-amplicon coverage summary."
     )
-    parser.add_argument("--bams", required=True, help="Path to sorted BAM files.")
+    parser.add_argument(
+        "--bams", required=True, help="Path to directory containing sorted BAM files."
+    )
     parser.add_argument(
         "--fasta",
         required=True,
@@ -283,10 +320,7 @@ def main():
     )
     args = parser.parse_args()
 
-    summary_path = Path(args.summary)
-    if summary_path.exists() and summary_path.is_file():
-        sys.stderr.write(f"Removing existing summary file: {args.summary}\n")
-        os.remove(summary_path)
+    summary_path = get_output_filename(args.summary)
 
     with open(summary_path, "a", newline="", encoding="utf-8") as fh:
         writer = csv.writer(fh, delimiter="\t")
