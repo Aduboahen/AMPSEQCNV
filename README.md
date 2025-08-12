@@ -95,12 +95,13 @@ python cnv_calculator.py -h
 
 usage: cnv_calculator.py [-h] [--data-path DATA_PATH]
                          [--reference-sample REFERENCE_SAMPLE]
-                         [--output-path OUTPUT_PATH] 
+                         [--output-path OUTPUT_PATH] [--chromosome CHROMOSOME]
 												 [--plot-results]
 
 options: \
   &emsp; -h, --help &ensp; show this help message and exit \
-  &emsp; --data-path &ensp; DATA_PATH Path to the TSV file containing the corrected coverage data \
+  &emsp; --data-path &ensp; DATA_PATH Path to the TSV file containing the corrected coverage data (default: amplicon_covearge.tsv) \
   &emsp; --reference-sample &ensp; REFERENCE_SAMPLE Sample ID of the reference sample to use for normalization \
-  &emsp; --output-path &ensp; OUTPUT_PATH  Path to save the CNV results \
+  &emsp; --output-path &ensp; OUTPUT_PATH  Path to save the CNV results (default: cnv_results.tsv) \
   &emsp; --plot-results &ensp; Whether to plot the CNV results
+  &emsp; --chromosome &ensp; CHROMOSOME Specific chromosome to plot (optional, default: None)
