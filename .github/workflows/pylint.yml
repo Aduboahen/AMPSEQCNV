@@ -4,7 +4,7 @@ on:
   push:
     branches: [ local ]
 env:
-  CI: False
+  CI: false
 jobs:
   build:
     runs-on: ubuntu-latest
