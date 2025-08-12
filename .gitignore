@@ -1,2 +1,5 @@
 genes_lofreq.bed
 *.ipynb
+.pylintrc
+*.pyc
+__pycache__/
