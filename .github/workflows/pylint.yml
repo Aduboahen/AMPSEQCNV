@@ -3,7 +3,8 @@ name: Pylint
 on: 
   push:
     branches: [ local ]
-
+env:
+  CI: False
 jobs:
   build:
     runs-on: ubuntu-latest
