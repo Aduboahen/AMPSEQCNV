@@ -8,6 +8,7 @@ and visualizes the results using a strip plot.
 """
 
 import argparse
+from typing import Optional
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -15,18 +16,18 @@ import seaborn as sb
 
 
 def cnv_calculator(
-    data_path: str, reference_sample: str, chromosome: str = None # type: ignore
+    coverage_data: pd.DataFrame, reference_sample: str, chromosome: Optional[str] = None
 ) -> pd.DataFrame:
     """
     Calculate CNV from coverage data.
 
-    This function reads in corrected coverage data from a TSV file, calculates log2 ratios
-    against a reference sample, and visualizes the results using a strip plot.
+    This function calculates log2 ratios against a reference sample
+    and visualizes the results using a strip plot.
 
     Parameters
     ----------
-    data_path : str
-        Path to the TSV file containing the corrected coverage data.
+    coverage_data : pd.DataFrame
+        DataFrame containing the corrected coverage data.
     reference_sample : str
         Sample ID of the reference sample to use for normalization.
 
@@ -35,8 +36,6 @@ def cnv_calculator(
     pd.DataFrame
         DataFrame of the log2(sample coverage / reference coverage).
     """
-    # Read in the data
-    coverage_data = pd.read_csv(data_path, sep="\t")
 
     # Pivot the data
     pivoted_data = pd.pivot_table(
@@ -72,7 +71,7 @@ def cnv_calculator(
                     value + 0.05,  # y position just above the point # type: ignore
                     sample_id,
                     fontsize=8,
-                    ha="center"
+                    ha="center",
                 )
 
     plt.axhline(y=0, color="red", linestyle="--")
@@ -108,7 +107,7 @@ def main():
     parser.add_argument(
         "--data-path",
         type=str,
-        default="amplicon_covearge.tsv",
+        default="amplicon_coverage.tsv",
         help="Path to the TSV file containing the corrected coverage data.",
     )
     parser.add_argument(
@@ -128,10 +127,16 @@ def main():
         action="store_true",
         help="Whether to plot the CNV results.",
     )
+    parser.add_argument("--chromosome", type=str, help="Specific chromosome to plot")
     parser.add_argument(
-        "--chromosome", 
+        "--plot-filename",
         type=str,
-        help="Specific chromosome to plot")
+        default=None,
+        help="""
+            Filename to save the plot. 
+            If not specified, will use output path and chromosome info.""
+            """,
+    )
     args = parser.parse_args()
 
     # Load the data
@@ -144,11 +149,11 @@ def main():
         )
     # Check if the data contains any NaN values
     if corrected_coverage.isna().any().any():
-        corrected_coverage.fillna(0, inplace=True)
+        corrected_coverage.dropna(inplace=True)
 
     # Calculate CNV and plot the results
     cnv_results = cnv_calculator(
-        args.data_path,
+        corrected_coverage,
         args.reference_sample,
         args.chromosome,
     )
@@ -156,7 +161,16 @@ def main():
     cnv_results.to_csv(args.output_path, sep="\t", index=True, header=True)
 
     if args.plot_results:
-        plt.savefig("cnv_results.png", dpi=300, bbox_inches="tight")
+        if args.plot_filename:
+            plot_filename = args.plot_filename
+        else:
+            base = args.output_path.rsplit(".", 1)[0]
+            if args.chromosome:
+                plot_filename = f"{base}_{args.chromosome}_cnv.png"
+            else:
+                plot_filename = f"{base}_cnv.png"
+        plt.savefig(plot_filename, dpi=300, bbox_inches="tight")
+
 
 if __name__ == "__main__":
     main()
