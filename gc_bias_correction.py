@@ -217,10 +217,15 @@ def correct_coverage(
         with open(summary_path, "a", newline="", encoding="utf-8") as fh:
             writer = csv.writer(fh, delimiter="\t")
             for region_idx in sorted(per_region_cov.keys()):
-                values = per_region_cov[region_idx]
-                values2 = per_region_exp[region_idx]
-                denom = np.nansum(values2)
-                ratio = 0 if denom == 0 else np.nansum(values) / denom
+                raw_coverage = per_region_cov[region_idx]
+                sum_raw_coverage = np.nansum(raw_coverage)
+                expected_coverage = per_region_exp[region_idx]
+                sum_expected_coverage = np.nansum(expected_coverage)
+                ratio = (
+                    0
+                    if sum_expected_coverage == 0
+                    else sum_raw_coverage / sum_expected_coverage
+                )
                 region_name = (
                     region_names[region_idx]
                     if region_idx < len(region_names)
@@ -230,8 +235,8 @@ def correct_coverage(
                     [
                         region_name.split(":")[0],
                         region_name.split(":")[1],
-                        f"{np.nansum(values):.2f}",
-                        f"{denom:.2f}",
+                        f"{sum_raw_coverage:.2f}",
+                        f"{sum_expected_coverage:.2f}",
                         f"{ratio:.2f}" if not np.isnan(ratio) else 0,
                         sampleid,
                     ]
@@ -264,8 +269,8 @@ def main():
     """
     Entry point for GC bias correction and per-amplicon coverage summary.
 
-    Collects coverage and GC content within regions from a BAM file, 
-    fits a LOESS curve to the data, and corrects the coverage values. 
+    Collects coverage and GC content within regions from a BAM file,
+    fits a LOESS curve to the data, and corrects the coverage values.
     Computes per-amplicon coverage summary and writes to an output file.
 
     Parameters
@@ -328,7 +333,7 @@ def main():
             [
                 "Chromosome",
                 "Region",
-                "Coverage",
+                "Raw Coverage",
                 "Expected Coverage",
                 "Corrected Coverage",
                 "Sampleid",
