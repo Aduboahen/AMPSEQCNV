@@ -3,3 +3,4 @@ genes_lofreq.bed
 .pylintrc
 *.pyc
 __pycache__/
+misc/
