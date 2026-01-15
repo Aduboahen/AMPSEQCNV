@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-cnv.py
+cnv_calculator.py
 Calculate CNV from coverage data.
 This script processes coverage data, calculates log2 ratios against a reference sample,
 and visualizes the results using a strip plot.
